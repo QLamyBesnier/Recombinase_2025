@@ -6,7 +6,7 @@ _Lamy-Besnier et al. (2025) GlaF is a Gp2.5-like annealase that defines a new fa
 
 The data necessary to reproduce the analysis can be found in the "Data" folder.
 
-It is composed of a 5 files :
+It is composed of 5 files:
 
 - *Frub.tsv*: a tsv table containing the FRUB output for the INHPARED 5,226 genomes.
 - *INHPARED.tsv*: a tsv table containing the full information, including taxonomy, of the INPHARED 5,226 genomes.
