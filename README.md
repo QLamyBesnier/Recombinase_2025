@@ -6,21 +6,19 @@ _Lamy-Besnier et al. (2025) GlaF is a Gp2.5-like annealase that defines a new fa
 
 The data necessary to reproduce the analysis can be found in the "Data" folder.
 
-It is composed of a 2 files :
+It is composed of a 5 files :
 
-- *Timeshift_fermenter.csv*: a csv table containing the counts of each OTU in each sample. It is the only file required for the timeshift experiment analysis.
-- *Bacteria_mutations_matrix.csv*: a csv table containing the list of mutations for each bacterial clone. Required for the analysis of the mutations.
-- *Phage_mutations_matrix.csv*: a csv table containing the list of mutations for each phage clone. Required for the analysis of the mutations.
-- *Interaction_matrix.csv*: a csv table containing which contains the infectivity each phage/bacteria couple (0 = no infection, 1 = infection). Required for the analysis of the mutations.
+- *Frub.tsv*: a tsv table containing the FRUB output for the INHPARED 5,226 genomes.
+- *Taxonomy.tsv*: a tsv table containing the taxonomy of the INPHARD 5,226 genomes.
+- *Felixounavirus.tsv*: a tsv table containing the FRUB output for the 91 Felixounavirus genomes downloaded on NCBI.
+- *Integrases.txt*: a txt table containing the output of the integrase search for the INHPARED 5,226 genomes.
+- *Recombinases.txt*: a txt table containing the output of the recombinase search for the INHPARED 5,226 genomes.
 
 ### Code
 
 The code corresponding to the data analysis can be found in the "Code" folder.
 
-It is composed of a 2 RMarkdown file, one per analysis:
-
-- *Timeshift_analysis.Rmd*: generates the figures found in the manuscript for the timeshift analysis (figures 3A and 3B).
-- *Mutations.Rmd*: generates the results of mutations analysis (*Genomic mutations are associated to the evolution P10 host range* section in the manuscript).
+It is composed of a single RMarkdown file, which generates the corresponding figures found in the manuscript.
 
 ### Issues
 
