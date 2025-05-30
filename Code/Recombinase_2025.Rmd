@@ -1,0 +1,1030 @@
+---
+title: "GlaF is a Gp2.5-like annealase that defines a new family of phage recombinases associated with duplication-rich Felixounavirus genomes"
+author: "Quentin Lamy-Besnier"
+date: "`r Sys.Date()`"
+output: 
+  html_document: 
+    fig_caption: yes
+    number_sections: yes
+    theme: united
+    toc: yes
+    toc_float:
+      collapsed: yes
+      smooth_scroll: yes
+  pdf_document:
+    toc: yes
+  word_document:
+    toc: yes
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Analysis of Lamy-Besnier et al. 2025: GlaF is a Gp2.5-like annealase that defines a new family of phage recombinases associated with duplication-rich Felixounavirus genomes.
+
+See https://github.com/QLamyBesnier/Recombinase_2025 for more information.
+
+# Set-up
+
+```{r Packages, message=FALSE, warning=FALSE}
+library(ggplot2) # for ggplot2 graphs
+library(ggnewscale) # for reseting scales on ggplots
+library(ggrepel) # for ggrepel on gpplots
+library(ggpubr) # for stats on ggplots
+library(ggsignif) # for p-values on ggplots
+library(scales) # for log transformations
+library(rstatix) # for the kruskal-wallis test
+library(reshape2) # for melting data frames
+library(stringr) # string manipulation
+library(dplyr) # for dataframe manipulation
+library(tidyr) # for dataframe manipulation
+library(purrr) # for list manipulation
+library(DT) # for interactive datatables
+```
+
+Loading and preparing data:
+
+```{r Data, message=FALSE, warning=FALSE}
+frub <- read.delim(file = "Frub.tsv", header = TRUE)
+taxo <- read.delim(file = "INPHARED.tsv", header = TRUE)
+frub_felix <- read.delim(file = "Felixounavirus.tsv", header = TRUE)
+
+# add the taxomony data to frub data
+frub <- frub %>%
+  left_join(taxo, by = c("Qid" = "Accession")) %>%
+  select(Qid, Qstart, Qend, Sid, Sstart, Send, Sstrand, QSlgt, QSident, Qseq, Sseq, Qannot, Sannot, Recombinase, Phrog_recombinase, Integrase, Phrog_integrase, Realm, Kingdom, Phylum, Class, Order, Family, Sub.family, Genus)
+
+# load up taxonomy for NC_048150, missing in the table
+frub[frub$Qid == "NC_048150",][,18:25] <- c("Duplodnaviria", "Heunggongvirae", "Uroviricota", "Caudoviricetes", "Drexlerviridae", "Unclassified", "Tunavirinae", "Tunavirus")
+
+# remove the lines correpsonding to the weird Septimatrevirus "PSV3"
+frub <- frub[!frub$Qid %in% c("NC_069752", "NC_069753", "NC_069754", "NC_069755"),]
+```
+
+# Integrases
+
+Distribution of the number of integrase per genome. This recreates Fig S2B:
+
+```{r integrases_full, message=FALSE, warning=FALSE}
+# load the full recombinase data
+int <- read.delim("Integrases.txt", sep = " ", header = FALSE, col.names = c("Query_Genome_ID", "Query_Protein_ID", "Target_Phrog_Number", "Target_Protein_Number", "Probability", "E-value", "P-value", "Score", "SS", "Cols", "Query HMM", "Template HMM", "Unknown", "Query_size", "Percentage_Coverage"))
+
+# remove unnecessary lines
+int <- int[, -c(13, 14)]
+
+# only keep one line per phage genome
+frub_dedup <- frub %>% distinct(Qid, .keep_all = TRUE)
+
+# average number of integrase per genome, for genomes having at least 1 integrase
+mean(frub_dedup[frub_dedup$Integrase >= 1,]$Integrase)
+
+# histogram for the distribution of the number of integrases per genome 
+ggplot(frub_dedup, aes(x = Integrase)) +
+  geom_histogram(stat = "count", fill = "#56B4E9", color = "black", binwidth = 1, size = 0.5, width = 0.7) +
+  geom_text(stat = "count", aes(label = ..count..), vjust = -0.5) +
+  labs(title = "",
+       x = "Number of integrases in genome",
+       y = "Count") +
+  scale_x_continuous(breaks = seq(min(frub_dedup$Integrase, na.rm = TRUE), 
+                                  max(frub_dedup$Integrase, na.rm = TRUE), by = 1)) +
+  scale_y_continuous(expand = expansion(mult = 0.15)) +
+  theme_classic() +
+  theme(text = element_text(size = 20), axis.text = element_text(color = "black"))
+
+ggsave("Integrase_per_genome.png", width = 8, height = 6, dpi = 300)
+```
+
+Distribution of the integrase PHROG number identified. This recreates Fig S2A:
+
+```{r integrases_phrogs, message=FALSE, warning=FALSE}
+# counting the number of occurence of each Phrog number
+int_phrogs <- data.frame(table(int$Target_Phrog_Number))
+colnames(int_phrogs) <- c("Phrog_number", "Frequency")
+
+# add a new column which is the overall percentage
+int_phrogs <- int_phrogs %>% mutate(Percentage = round((Frequency / sum(int_phrogs$Frequency)) * 100, digits = 1))
+
+# ordering the phrog numbers by increasing number of counts for the graph
+int_phrogs$Phrog_number <- factor(int_phrogs$Phrog_number, levels = int_phrogs %>% arrange(Frequency) %>% pull(Phrog_number))
+
+# dummy variable for plotting
+int_phrogs$Dummy <- ""
+
+# stacked barplot
+ggplot(int_phrogs, aes(x = Dummy, y = Frequency, fill = Phrog_number, width = 0.3)) +
+  geom_bar(stat = "identity") +
+  theme_minimal() +
+  labs(title = "",
+       x = "",
+       y = "Number of genomes") +
+  scale_fill_manual(values = c("#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf", "#1b9e77", "#aec7e8", "#ffbb78", "#98df8a")) +
+  theme(text = element_text(size = 20), axis.text = element_text(color = "black"))
+
+ggsave("Integrase_phrog.png", width = 8, height = 6, dpi = 300)
+```
+
+# Recombinases
+
+Distribution of the number of recombinases per genome. This recreates Fig S3A:
+
+```{r recombinase_full, message=FALSE, warning=FALSE}
+# loading the full recombinase data
+rec <- read.delim("Recombinases.txt", sep = " ", header = FALSE, col.names = c("Query_Genome_ID", "Query_Protein_ID", "Target_Phrog_Number", "Target_Protein_Number", "Probability", "E-value", "P-value", "Score", "SS", "Cols", "Query HMM", "Template HMM", "Unknown", "Query_size", "Percentage_Coverage"))
+
+# remove unnecessary columns
+rec <- rec[, -c(13, 14)]
+
+# average number of recombinase per genome, for genomes having a recombinase
+mean(frub_dedup[frub_dedup$Recombinase >= 1,]$Recombinase)
+
+# histogram for the distribution of the number of recombinases per genome (all genomes)
+ggplot(frub_dedup, aes(x = Recombinase)) +
+  geom_histogram(stat = "count", fill = "#56B4E9", color = "black", binwidth = 1, size = 0.5, width = 0.7) +
+  geom_text(stat = "count", aes(label = ..count..), vjust = -0.5) +
+  labs(title = "",
+       x = "Number of recombinases in genome",
+       y = "Count") +
+  scale_x_continuous(breaks = seq(min(frub_dedup$Recombinase, na.rm = TRUE), 
+                                  max(frub_dedup$Recombinase, na.rm = TRUE), by = 1)) +
+  scale_y_continuous(expand = expansion(mult = 0.15)) +
+  theme_classic() +
+  theme(text = element_text(size = 20), axis.text = element_text(color = "black"))
+
+ggsave("Recombinases_per_genome.png", width = 8, height = 6, dpi = 300)
+```
+
+Distribution of the recombinase families identified. This recreates Fig S3B:
+
+```{r recombinases_family, message=FALSE, warning=FALSE}
+# count occurences for each recombinase PHROG
+rec_phrogs <- data.frame(table(rec$Target_Phrog_Number))
+colnames(rec_phrogs) <- c("Phrog_number", "Frequency")
+
+# add the corresponding families for each PHROG
+rec_phrogs <- cbind(rec_phrogs, "Family" = c("RecT", "Erf", "Gp2.5", "RecT", "Sak4", "RecT", "Erf", "Erf", "RecT", "RecT", "RecT", "Sak4", "Erf", "RecT", "RecT", "Erf", "Sak", "Gp2.5", "Sak", "Uvsx"))
+
+# aggregating the results per family
+rec_family <- rec_phrogs %>%
+  group_by(Family) %>%
+  summarize(Total_Frequency = sum(Frequency)) 
+
+# adding a column with the percentages for each family
+rec_family <- rec_family %>% mutate(Percentage = round((Total_Frequency / sum(rec_family$Total_Frequency)) * 100, digits = 1))
+
+# dummy variable for plotting
+rec_family$Dummy <- ""
+
+# change the order of the families for the plot
+rec_family$Family <- factor(rec_family$Family, levels = c("Erf", "Sak", "RecT", "Sak4", "Gp2.5", "Uvsx"))
+
+# stacked barplot
+ggplot(rec_family, aes(x = Dummy, y = Total_Frequency, fill = Family, width = 0.3)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = paste0(Percentage, "%")), position = position_stack(vjust = 0.5), color = "white", size = 5) +
+  theme_minimal() +
+  labs(title = "",
+       x = "",
+       y = "Number of genomes") +
+  scale_fill_manual(values = c("RecT" = "#4169E1", "Sak4" = "#8B0000", "Sak" = "#191970", "Uvsx" = "#DC143C", "Erf" = "#4682B4", "Gp2.5" = "#008B45")) +
+  theme(text = element_text(size = 20), axis.text = element_text(color = "black"))
+
+ggsave("Recombinase_family.png", width = 6, height = 6, dpi = 300)
+```
+
+Chi2 test for the link between phage lifestyle and presence of at least 1 recombinase in the genome:
+
+```{r recombinase_temp, message=FALSE, warning=FALSE}
+# creating new dataframes per phage lifestyle
+temperate <- frub[frub$Integrase >= 1,]
+virulent <- frub[frub$Integrase == 0,]
+
+# create new rows that for the binary presence (1) or absence (0) of recombinases or integrases in the genome
+frub_dedup$Integrase_bin <- ifelse(frub_dedup$Integrase == 0, 0, "1")
+frub_dedup$Recombinase_bin <- ifelse(frub_dedup$Recombinase == 0, 0, "1")
+
+# chi-squarred test of independance
+chisq.test(table(frub_dedup$Integrase_bin, frub_dedup$Recombinase_bin))
+```
+
+Distribution of the recombinase families identified, per phage lifestyle. This recreates Fig S3C:
+
+```{r recombinase_temp_vir_families, message=FALSE, warning=FALSE}
+# add information about lifestyle for each genome in the dataframe with all recombinase search results
+rec <- merge(rec, frub_dedup[c("Qid", "Integrase_bin")], by.x = "Query_Genome_ID", by.y = "Qid", all.x = TRUE)
+
+# generate counts for each phrog and for each lifestyle separately
+rec_phrogs_lifestyle <- data.frame(table(rec$Target_Phrog_Number, rec$Integrase_bin))
+colnames(rec_phrogs_lifestyle) <- c("Phrog_number", "Integrase", "Frequency")
+
+# add the corresponding recombinase families
+rec_phrogs_lifestyle <- cbind(rec_phrogs_lifestyle, "Family" = c("RecT", "Erf", "Gp2.5", "RecT", "Sak4", "RecT", "Erf", "Erf", "RecT", "RecT", "RecT", "Sak4", "Erf", "RecT", "RecT", "Erf", "Sak", "Gp2.5", "Sak", "Uvsx"))
+
+# aggrage the data by family
+rec_family_lifestyle <- rec_phrogs_lifestyle %>%
+  group_by(Integrase, Family) %>%
+  summarize(Total_Frequency = sum(Frequency)) 
+
+# add a new column with the percentage for each family
+rec_family_lifestyle <- rec_family_lifestyle %>%
+  group_by(Integrase) %>%
+  mutate(Percentage = round((Total_Frequency / sum(Total_Frequency)) * 100, digits = 1))
+
+# change the order of the families for the plot
+rec_family_lifestyle$Family <- factor(rec_family_lifestyle$Family, levels = c("Erf", "Sak", "RecT", "Sak4", "Gp2.5", "Uvsx"))
+
+# stacked barplot
+ggplot(rec_family_lifestyle, aes(x = Integrase, y = Percentage, fill = Family, width = 0.3)) +
+  geom_bar(stat = "identity") +
+  geom_segment(aes(x = 1.15, xend = 1.85, y = 100, yend = 100), color = "darkorange", size = 0.5, linetype = "dashed") +
+  geom_segment(aes(x = 1.15, xend = 1.85, y = 74.8, yend = 36.1), color = "darkorange", size = 0.5, linetype = "dashed") +
+  geom_segment(aes(x = 1.15, xend = 1.85, y = 51.2, yend = 15), color = "darkgreen", size = 0.5, linetype = "dashed") +
+  geom_segment(aes(x = 1.15, xend = 1.85, y = 0, yend = 0), color = "darkgreen", size = 0.5, linetype = "dashed") +
+  scale_x_discrete(labels = c("0" = "Virulent", "1" = "Temperate")) +
+  geom_text(aes(label = paste0(Percentage, "%")), position = position_stack(vjust = 0.5), color = "white", size = 5) +
+  theme_minimal() +
+  labs(title = "",
+       x = "Lifestyle",
+       y = "Percentage") +
+  scale_fill_manual(values = c("RecT" = "#4169E1", "Sak4" = "#8B0000", "Sak" = "#191970", "Uvsx" = "#DC143C", "Erf" = "#4682B4", "Gp2.5" = "#008B45")) +
+  theme(text = element_text(size = 20), axis.text = element_text(color = "black"), axis.text.x = element_text(color = c("darkgreen", "darkorange")))
+
+ggsave("Recombinase_family_lifestyle.png", width = 8, height = 6, dpi = 300)
+```
+
+# Duplications
+
+Presence of duplications in the dataset. This recreates Fig 1A: 
+
+```{r duplications_number_histogram, message=FALSE, warning=FALSE}
+# duplication dataframe without lines without duplications (Qstart = NA if no duplication)
+frub_noNA <- frub[!is.na(frub$Qstart),]
+
+# number of duplications per genome
+nb_each_genome <- as.data.frame(table(frub_noNA$Qid))
+
+# number of duplication, for each number of duplication per genome
+size_distribution <- as.data.frame(table(nb_each_genome$Freq))
+colnames(size_distribution) <- c("number_of_duplications", "number_of_genomes")
+
+# number of genome with zero duplications
+size_distribution_zero <- rbind(data_frame(number_of_duplications = 0, number_of_genomes = nrow(frub[is.na(frub$Qstart),])), size_distribution)
+
+# aggregate all > 1 duplication per genome
+size_distribution_aggregated <- size_distribution_zero %>%
+  mutate(number_of_duplications = as.integer(number_of_duplications)) %>%
+  mutate(number_of_duplications = ifelse(number_of_duplications >= 2, "≥2", as.character(number_of_duplications))) %>%
+  group_by(number_of_duplications) %>%
+  summarize(number_of_genomes = sum(number_of_genomes)) %>%
+  ungroup() %>%
+  mutate(Percentage = number_of_genomes / sum(number_of_genomes) * 100)
+size_distribution_aggregated$Dummy <- c("")
+size_distribution_aggregated$number_of_duplications <- factor(size_distribution_aggregated$number_of_duplications, levels = c("0", "1", "≥2"))
+
+# stacked pie chart
+ggplot(size_distribution_aggregated, aes(x = Dummy, y = number_of_genomes, fill = number_of_duplications, width = 0.2)) +
+  geom_bar(stat = "identity", width = 1) +
+  geom_text(aes(label = sprintf("%.1f%%", Percentage)), position = position_stack(vjust = 0.5), color = "white", size = 8) +
+  theme_minimal() +
+  scale_x_discrete(expand = c(0.1, 0.1)) +
+  labs(title = "",
+       x = "",
+       y = "Number of genomes") +
+  theme(text = element_text(size = 20), 
+        axis.text = element_text(color = "black"), 
+        legend.position = "bottom",
+        legend.title = element_text(hjust = 0.5)) +
+  scale_fill_manual(values = c("darkgrey", "#74c476", "#238b45")) +
+  guides(fill = guide_legend(title = "Duplications/genome", title.position="top"))
+
+ggsave("Duplications_overview.png", width = 4, height = 6, dpi = 300)
+```
+
+Distribution of the number of duplications per genome. This recreates Fig S1:
+
+```{r duplications_number_withzero, message=FALSE, warning=FALSE}
+# number of duplications per genome
+nb_each_genome <- as.data.frame(table(frub_noNA$Qid))
+
+# number of duplication, for each number of duplication per genome
+size_distribution <- as.data.frame(table(nb_each_genome$Freq))
+colnames(size_distribution) <- c("number_of_duplications", "number_of_genomes")
+
+# histogram
+ggplot(data = size_distribution, aes(x=number_of_duplications, y=number_of_genomes)) + 
+  geom_bar(stat="identity", fill = "#56B4E9", color = "black", size = 0.5, width = 0.7) +
+  scale_x_discrete(limits = c("1","2","3","4","5","6","7","8","9","10","11","12","14","16","18","29","31")) +
+  labs(x="Number of duplications", y="Number of genomes") +
+  theme_classic() + 
+  theme(text = element_text(size = 20), axis.text = element_text(color = "black"))
+
+ggsave("Duplications_per_genome.png", width = 8, height = 6, dpi = 300)
+```
+
+Distribution of the size of the duplications. This recreates Fig 1B:
+
+```{r duplication_sizes, message=FALSE, warning=FALSE}
+# generating the appropriate x axis breaks (50 bp each, from 100 to 1000, with a special category for all that > 1000)
+breaks <- seq(100, 1000, by = 50)
+bins <- cut(frub_noNA$QSlgt, breaks, right = FALSE)
+bins_length <- as.data.frame(table(bins))
+bins_length$bins <- as.character(bins_length$bins)
+bins_length <- rbind(bins_length, c(">1000", nrow(frub_noNA[frub_noNA$QSlgt >=1000,])))
+bins_length$bins <- breaks
+bins_length$Freq <- as.numeric(bins_length$Freq)
+colnames(bins_length) <- c("size", "number_of_duplications")
+
+ggplot(data = bins_length, aes(x = as.factor(size), y = number_of_duplications)) + 
+  geom_bar(stat = "identity", fill = "#56B4E9", color = "black", size = 0.5, width = 0.7) +
+  scale_x_discrete(labels = c("100-149", "150-199", "200-249", "250-299", "300-349", "350-399",
+                              "400-449", "450-499", "500-549", "550-599", "600-649", "650-699",
+                              "700-749", "750-799", "800-849", "850-899", "900-949", "950-999", "≥1000")) +
+  theme_classic() +
+  theme(axis.title = element_text(size = 20), axis.text.y = element_text(size = 15),
+        axis.text.x = element_text(size = 15, angle = 35, hjust = 1), axis.text = element_text(color = "black")) +
+  labs(x = "Size of duplications (bp)", y = "Number of duplications")
+
+ggsave("Duplications_size.png", width = 8, height = 6, dpi = 300)
+```
+
+Annotations associated to the duplications. This recreates Fig 1C:
+
+```{r annotation_pie_chart, message=FALSE, warning=FALSE}
+# extract product values for both duplications locations
+frub_noNA$Functions_Qannot <- str_extract_all(frub_noNA$Qannot, "function=[^;]+")
+frub_noNA$Functions_Sannot <- str_extract_all(frub_noNA$Sannot, "function=[^;]+")
+
+# remove the "function=" prefix
+frub_noNA$Functions_Qannot <- lapply(frub_noNA$Functions_Qannot, function(x) str_replace_all(x, "function=", ""))
+frub_noNA$Functions_Sannot  <- lapply(frub_noNA$Functions_Sannot, function(x) str_replace_all(x, "function=", ""))
+
+# merge both duplications locations
+frub_noNA$All_functions <- mapply(function(x, y) c(x, y), frub_noNA$Functions_Qannot, frub_noNA$Functions_Sannot)
+
+# dataframe of the function for each CDS
+annot_df <- as.data.frame(table(unlist(frub_noNA$All_functions)))
+colnames(annot_df) <- c("Function", "Frequency")
+
+# add the percentage for each function
+annot_df$Percentage <- round((annot_df$Frequency / sum(annot_df$Frequency)) * 100, 1)
+
+# improve and arrange the order of annotations
+annot_df$Function <- str_to_sentence(annot_df$Function)
+annot_df$Function[2] <- "DNA/RNA metabolism"
+annot_df <- annot_df %>% mutate(Function = ifelse(Function == "Moron, auxiliary metabolic gene and host takeover", "AMG", Function))
+annot_df$Function <- factor(annot_df$Function, levels = c("Tail", "DNA/RNA metabolism", "Head and packaging", "AMG", "Transcription regulation", "Lysis", "Integration and excision", "Connector", "Other", "Unknown function"))
+
+# pie chart 
+ggplot(data = annot_df, aes(x="", y = Percentage, fill = Function)) +
+  geom_col(color = "black", size = 0.5) +
+  coord_polar(theta = "y") +
+  geom_text(aes(label = paste0(Percentage, "%"), x=1.65), position = position_stack(vjust = 0.5), size = 3) +
+  scale_fill_manual(values = c("Tail" = "#00429d", 
+                                "DNA/RNA metabolism" = "#d62728",
+                                "Head and packaging" = "#619cff",
+                                "AMG" = "#bcbd22",
+                                "Transcription regulation" = "#ff7f0e",
+                                "Lysis" = "#2ca02c",
+                                "Integration and excision" = "#8c564b",
+                                "Connector" = "#2b6cb0",
+                                "Other" = "#9467bd",
+                                "Unknown function" = "#7f7f7f")) +
+  theme_void() +
+  guides(fill = guide_legend(title = NULL))
+
+ggsave("Duplications_annotations.png", width = 6, height = 6, dpi = 300)
+```
+
+Ratio of the number genes having duplication per annotation category by the number of genes in that annotation family. This recreates Fig 1D:
+
+```{r annotation_enrichment, message=FALSE, warning=FALSE}
+# load data
+functions_overall <- data.frame(
+  Function = c("Tail", "DNA/RNA metabolism", "Head and packaging", "Other", 
+               "AMG", "Transcription regulation", 
+               "Lysis", "Integration and excision", "Connector", "Unknown function"),
+  Frequency = c(45893, 65417, 38339, 21244, 11410, 10687, 13869, 3610, 12127, 309106))
+
+# add percentage
+functions_overall$Percentage <- round((functions_overall$Frequency / sum(functions_overall$Frequency)) * 100, 2)
+
+# improve and arrange the order of annotations
+functions_overall$Function <- factor(functions_overall$Function, levels = c("Tail", "DNA/RNA metabolism", "Head and packaging", "AMG", "Transcription regulation", "Lysis", "Integration and excision", "Connector", "Other", "Unknown function"))
+
+# merging both dataframes
+enrich_df <- merge(functions_overall, annot_df, by = "Function", suffixes = c("_overall", "_annot"))
+
+# calculation of the ratio
+enrich_df$Frequency_Ratio <- (enrich_df$Frequency_annot / enrich_df$Frequency_overall)*100
+
+# mean of the ratio accross all genes with an annotation
+only_annot_df <- enrich_df %>% filter(Function != "Unknown function")
+mean_ratio <- sum(only_annot_df$Frequency_annot)/sum(only_annot_df$Frequency_overall)*100
+
+# barplot
+ggplot(enrich_df, aes(x = reorder(Function, Frequency_Ratio), y = Frequency_Ratio, fill = Function)) +
+  geom_bar(stat = "identity") +
+  labs(title = "",
+       x = "Function",
+       y = "Genes with duplications in category / Genes in this category (%)") +
+  scale_y_continuous(breaks = seq(0, max(enrich_df$Frequency_Ratio), by = 0.25)) +
+  coord_flip() +
+  geom_hline(yintercept = mean_ratio, color = "red", linetype = "dashed", size = 1) +
+  annotate("text", x = 0.55, y = mean_ratio + 0.02, label = "Mean", color = "red", size = 6, fontface = "italic", hjust = 0) +
+  scale_fill_manual(values = c("Tail" = "#00429d", 
+                               "DNA/RNA metabolism" = "#d62728",
+                               "Head and packaging" = "#619cff",
+                               "AMG" = "#bcbd22",
+                               "Transcription regulation" = "#ff7f0e",
+                               "Lysis" = "#2ca02c",
+                               "Integration and excision" = "#8c564b",
+                               "Connector" = "#2b6cb0",
+                               "Other" = "#9467bd",
+                               "Unknown function" = "#7f7f7f")) +
+  theme_minimal() +
+  theme(legend.position = "none",
+        axis.title = element_text(size = 25), axis.text.y = element_text(size = 20),
+        axis.text.x = element_text(size = 20, angle = 35, hjust = 1), axis.text = element_text(color = "black"))
+
+ggsave("Annotations_enrichment.png", width = 15, height = 8, dpi = 300)
+```
+
+Statistics for the "Tail" annotation enrichment:
+
+```{r Stats_enrichment, message=FALSE, warning=FALSE}
+# Set-up the contigency table
+a <- enrich_df %>% filter(Function == "Tail") %>% pull(Frequency_annot)  # Number of duplicated genes in "Tail" annotation
+b <- enrich_df %>% filter(Function == "Tail") %>% pull(Frequency_overall) - a  # Number of non-duplicated genes in "Tail" annotation
+c <- enrich_df %>% filter(Function != "Tail") %>% pull(Frequency_annot) %>% sum()  # Number of duplicated genes in "Non-Tail" annotation
+d <- enrich_df %>% filter(Function != "Tail") %>% pull(Frequency_overall) %>% sum() - c  # Number of non-duplicated genes in "Non-Tail" annotation
+cont_table <- matrix(c(a, b, c, d), nrow = 2, byrow = TRUE)
+
+# Fisher test
+fisher.test(cont_table)
+
+# Chi2 test
+chisq.test(cont_table)
+
+# Z-test
+p1 <- a / (a + b)  # Proportion of duplicated genes in "Tail" annotation
+p0 <- 0.0087  # Average proportion of duplicated genes
+n1 <- a + b  # Number of genes in "Tail" annotation
+n2 <- c + d  # Number of genes in "Non-Tail" annotation (total number of genes)
+p_pooled <- (p1 * n1 + p0 * n2) / (n1 + n2)
+SE <- sqrt(p_pooled * (1 - p_pooled) * (1/n1 + 1/n2))
+z_score <- (p1 - p0) / SE; z_score
+p_value <- 2 * (1 - pnorm(abs(z_score))); p_value
+```
+
+Number of duplication per genome compared per phage lifestyle. This recreates Fig 2A:
+
+```{r test_duplication_lifestyle_total_all, message=FALSE, warning=FALSE}
+# number of duplications per genome for each group (Qid appearing once in the dataset distinguished by no duplication or 1 duplication)
+dup_per_genome_temp_all <- temperate %>%
+  count(Qid) %>%
+  mutate(Count = ifelse(Qid %in% (temperate %>% filter(is.na(Qstart)) %>% pull(Qid) %>% unique()), 0, n))
+dup_per_genome_vir_all <- virulent %>%
+  count(Qid) %>%
+  mutate(Count = ifelse(Qid %in% (virulent %>% filter(is.na(Qstart)) %>% pull(Qid) %>% unique()), 0, n))
+
+# arrange data in a dataframe for plotting
+dup_per_genome_temp_all_df <- data.frame(duplications = as.numeric(dup_per_genome_temp_all$Count), Lifestyle = "Temperate")
+dup_per_genome_vir_all_df <- data.frame(duplications = as.numeric(dup_per_genome_vir_all$Count), Lifestyle = "Virulent")
+lifestyle_combined_all <- rbind(dup_per_genome_temp_all_df, dup_per_genome_vir_all_df)
+
+# arrange duplications into bins
+lifestyle_combined_all$duplication_bins <- cut(
+  lifestyle_combined_all$duplications,
+  breaks = c(-Inf, 1, 2, 3, 4, 5, Inf),
+  labels = c("0", "1", "2", "3", "4", "≥5"),
+  right = FALSE)
+
+# transform numbers into percentages, relative to the total number of occurences per lifestyle
+percentage_lifestyle <- lifestyle_combined_all %>%
+  group_by(Lifestyle, duplication_bins) %>%
+  summarise(count = n()) %>%
+  group_by(Lifestyle) %>%
+  mutate(percentage = count / sum(count) * 100)
+
+# wilcoxon test
+wilcox.test(duplications ~ Lifestyle, data = lifestyle_combined_all)
+wilcox_lifestyle_label <- paste("p =", sprintf("%.2g", wilcox.test(duplications ~ Lifestyle, data = lifestyle_combined_all)$p.value))
+
+# histogram with counts as labels
+ggplot(percentage_lifestyle, aes(x = duplication_bins, y = percentage, fill = Lifestyle)) +
+  geom_bar(stat = "identity", position = "dodge", color = "black", size = 0.5) +
+  geom_text(aes(label = count),
+            position = position_dodge(width = 0.9), vjust = -0.5, size = 5, color = "black", fontface = "bold") +
+  labs(title = "",
+       x = "Number of duplications/genome",
+       y = "Percentage") +
+  annotate("text", x = 4, y = max(percentage_lifestyle$percentage), label = wilcox_lifestyle_label, color = "black", hjust = 0.5, vjust = 1, size = 8, fontface = 2) +
+  theme_classic() +
+  scale_fill_manual(values = c("darkorange", "darkgreen")) +
+  theme(text = element_text(size = 20), axis.text = element_text(color = "black"))
+
+ggsave("Duplications_lifestyle.png", width = 8, height = 6, dpi = 300)
+```
+
+Number of duplication per genome depending on the presence of a recombinase in the genome or not. This recreates Fig 2B:
+
+```{r duplication_recombinase_genome, message=FALSE, warning=FALSE}
+# create separate dataframes for lines of the dataframe corresponding to genomes having at least 1 recombinase, or not
+frub_rec <- frub[frub$Recombinase >= 1,]
+frub_norec <- frub[frub$Recombinase == 0,]
+
+dup_per_genome_rec2 <- frub_rec %>%
+  count(Qid) %>%
+  mutate(Count = ifelse(Qid %in% (frub_rec %>% filter(is.na(Qstart)) %>% pull(Qid) %>% unique()), 0, n))
+dup_per_genome_norec2 <- frub_norec %>%
+  count(Qid) %>%
+  mutate(Count = ifelse(Qid %in% (frub_norec %>% filter(is.na(Qstart)) %>% pull(Qid) %>% unique()), 0, n))
+
+# arrange data in a dataframe for plotting
+dup_per_genome_rec_all_df <- data.frame(duplications = as.numeric(dup_per_genome_rec2$Count), recombinase = "Yes")
+dup_per_genome_norec_all_df <- data.frame(duplications = as.numeric(dup_per_genome_norec2$Count), recombinase = "No")
+recombinase_combined_all <- rbind(dup_per_genome_rec_all_df, dup_per_genome_norec_all_df)
+recombinase_combined_all$recombinase <- factor(recombinase_combined_all$recombinase, levels = c("No", "Yes"))
+
+# arrange duplications into bins
+recombinase_combined_all$duplication_bins <- cut(
+  recombinase_combined_all$duplications,
+  breaks = c(-Inf, 1, 2, 3, 4, 5, Inf),
+  labels = c("0", "1", "2", "3", "4", "≥5"),
+  right = FALSE)
+
+# transform numbers into percentages, relative to the total number of occurrences per recombinase
+percentage_recombinase <- recombinase_combined_all %>%
+  group_by(recombinase, duplication_bins) %>%
+  summarise(count = n()) %>%
+  group_by(recombinase) %>%
+  mutate(percentage = count / sum(count) * 100)
+
+# wilcoxon test
+wilcox.test(duplications ~ recombinase, data = recombinase_combined_all)
+wilcox_recombinase_label <- paste("p =", round(wilcox.test(duplications ~ recombinase, data = recombinase_combined_all)$p.value, 2))
+
+# histogram with counts as labels
+ggplot(percentage_recombinase, aes(x = duplication_bins, y = percentage, fill = recombinase)) +
+  geom_bar(stat = "identity", position = "dodge", color = "black", size = 0.5) +
+  geom_text(aes(label = count),
+            position = position_dodge(width = 0.9), vjust = -0.5, size = 5, color = "black", fontface = "bold") +
+  labs(title = "",
+       x = "Number of duplications/genome",
+       y = "Percentage",
+       fill = "Recombinase") +
+  annotate("text", x = 4, y = max(percentage_recombinase$percentage), label = wilcox_recombinase_label, color = "black", hjust = 0.5, vjust = 1, size = 8, fontface = 2) +
+  theme_classic() +
+  scale_fill_manual(values = c("steelblue", "darkred")) +
+  theme(text = element_text(size = 20), axis.text = element_text(color = "black"))
+
+ggsave("Duplications_recombinase.png", width = 8, height = 6, dpi = 300)
+```
+
+Number of duplication per genome depending on the presence or not of a recombinase in the genome, for each lifestyle separately. This recreates Fig 2C:
+
+```{r duplication_recombinase_lifestyle, message=FALSE, warning=FALSE}
+# add the lifestyle to dup_per_genome_rec2 and dup_per_genome_norec2
+dup_per_genome_rec2_lifestyle <- dup_per_genome_rec2 %>%
+  left_join(frub_dedup %>% select(Qid, Integrase_bin), by = "Qid") %>%
+  mutate(Integrase_bin = recode(Integrase_bin, `0` = "Virulent", `1` = "Temperate")) %>%
+  rename(lifestyle = Integrase_bin)
+dup_per_genome_norec2_lifestyle <- dup_per_genome_norec2 %>%
+  left_join(frub_dedup %>% select(Qid, Integrase_bin), by = "Qid") %>%
+  mutate(Integrase_bin = recode(Integrase_bin, `0` = "Virulent", `1` = "Temperate")) %>%
+  rename(lifestyle = Integrase_bin)
+
+# arrange data in a dataframe for plotting
+dup_per_genome_rec_lifestyle_all_df <- data.frame(Qid = dup_per_genome_rec2_lifestyle$Qid, duplications = as.numeric(dup_per_genome_rec2_lifestyle$Count), lifestyle = factor(dup_per_genome_rec2_lifestyle$lifestyle, levels = c("Temperate", "Virulent")), recombinase = "Yes")
+dup_per_genome_norec_lifestyle_all_df <- data.frame(Qid = dup_per_genome_norec2_lifestyle$Qid, duplications = as.numeric(dup_per_genome_norec2_lifestyle$Count), lifestyle = factor(dup_per_genome_norec2_lifestyle$lifestyle, levels = c("Temperate", "Virulent")), recombinase = "No")
+recombinase_lifestyle_combined_all <- rbind(dup_per_genome_rec_lifestyle_all_df, dup_per_genome_norec_lifestyle_all_df)
+recombinase_lifestyle_combined_all$recombinase <- factor(recombinase_lifestyle_combined_all$recombinase, levels = c("No", "Yes"))
+
+# virulent: subset data
+recombinase_lifestyle_combined_vir <- recombinase_lifestyle_combined_all %>% filter(lifestyle == "Virulent")
+
+# virulent: arrange duplications into bins
+recombinase_lifestyle_combined_vir$duplication_bins <- cut(
+  recombinase_lifestyle_combined_vir$duplications,
+  breaks = c(-Inf, 1, 2, 3, 4, 5, Inf),
+  labels = c("0", "1", "2", "3", "4", "≥5"),
+  right = FALSE)
+
+# virulent: transform numbers into percentages, relative to the total number of occurrences per recombinase
+percentage_vir <- recombinase_lifestyle_combined_vir %>%
+  group_by(recombinase, duplication_bins) %>%
+  summarise(count = n()) %>%
+  group_by(recombinase) %>%
+  mutate(percentage = count / sum(count) * 100)
+
+# virulent: wilcoxon test
+wilcox.test(duplications ~ recombinase, data = recombinase_lifestyle_combined_vir)
+wilcox_recombinase_label_vir <- paste("p =", sprintf("%.2g", wilcox.test(duplications ~ recombinase, data = recombinase_lifestyle_combined_vir)$p.value))
+
+# virulent: barplot
+p_vir <- ggplot(percentage_vir, aes(x = duplication_bins, y = percentage, fill = recombinase)) +
+  geom_bar(stat = "identity", position = "dodge", color = "black", size = 0.5) +
+  geom_text(aes(label = count),
+            position = position_dodge(width = 0.9), vjust = -0.5, size = 5, color = "black", fontface = "bold") +
+  labs(title = "Virulent",
+       x = "Number of duplications/genome",
+       y = "Percentage",
+       fill = "Recombinase") +
+  annotate("text", x = 4, y = max(percentage_vir$percentage), label = wilcox_recombinase_label_vir, color = "black", hjust = 0.5, vjust = 1, size = 8, fontface = 2) +
+  theme_classic() +
+  scale_fill_manual(values = c("steelblue", "darkred")) +
+  theme(text = element_text(size = 20), axis.text = element_text(color = "black"), plot.title = element_text(hjust = 0.5, size = 30, color = "darkgreen", face = "bold"))
+
+# temperate: subset data
+recombinase_lifestyle_combined_temp <- recombinase_lifestyle_combined_all %>% filter(lifestyle == "Temperate")
+
+# temperate: arrange duplications into bins
+recombinase_lifestyle_combined_temp$duplication_bins <- cut(
+  recombinase_lifestyle_combined_temp$duplications,
+  breaks = c(-Inf, 1, 2, 3, 4, 5, Inf),
+  labels = c("0", "1", "2", "3", "4", "≥5"),
+  right = FALSE)
+
+# temperate: transform numbers into percentages, relative to the total number of occurrences per recombinase
+percentage_temp <- recombinase_lifestyle_combined_temp %>%
+  group_by(recombinase, duplication_bins) %>%
+  summarise(count = n()) %>%
+  group_by(recombinase) %>%
+  mutate(percentage = count / sum(count) * 100)
+
+# temperate: wilcoxon test
+wilcox.test(duplications ~ recombinase, data = recombinase_lifestyle_combined_temp)
+wilcox_recombinase_label_temp <- paste("p =", sprintf("%.2g", wilcox.test(duplications ~ recombinase, data = recombinase_lifestyle_combined_temp)$p.value))
+
+# temperate: barplot
+p_temp <- ggplot(percentage_temp, aes(x = duplication_bins, y = percentage, fill = recombinase)) +
+  geom_bar(stat = "identity", position = "dodge", color = "black", size = 0.5) +
+  geom_text(aes(label = count),
+            position = position_dodge(width = 0.9), vjust = -0.5, size = 5, color = "black", fontface = "bold") +
+  labs(title = "Temperate",
+       x = "Number of duplications/genome",
+       y = "Percentage",
+       fill = "Recombinase") +
+  annotate("text", x = 4, y = max(percentage_temp$percentage), label = wilcox_recombinase_label_temp, color = "black", hjust = 0.5, vjust = 1, size = 8, fontface = 2) +
+  theme_classic() +
+  scale_fill_manual(values = c("steelblue", "darkred")) +
+  theme(text = element_text(size = 20), axis.text = element_text(color = "black"), plot.title = element_text(hjust = 0.5, size = 30, color = "darkorange", face = "bold"))
+
+p_both <- ggarrange(p_vir + rremove("ylab") + rremove("xlab"), p_temp + rremove("ylab") + rremove("xlab"), common.legend = TRUE, legend = "right")
+
+annotate_figure(p_both, left = text_grob("Percentage", rot = 90, vjust = 1, size = 20),
+                    bottom = text_grob("Number of duplications/genome", size = 20))
+
+ggsave("Duplications_recombinase_lifestyle.png", width = 12, height = 6, dpi = 300)
+```
+
+10 genera with the highest percentage of genomes with at least 1 duplication and their associated characteristics. This recreates Fig 3A:
+
+```{r Top_duplication, message=FALSE, warning=FALSE}
+# dataframe with only one line per genome, and only lines which correspond to duplication events
+frub_dedup_noNA <- frub_noNA %>% distinct(Qid, .keep_all = TRUE)
+
+# number of duplications per genus
+dup_noNA <- table(frub_dedup_noNA$Genus)
+
+# number of genomes per genus
+dup <- table(frub_dedup$Genus)
+
+# only keep the number of genomes per genus for the genomes that have duplications
+dup <- dup[names(dup_noNA)]
+
+# dataframe with, for each genus, the number of duplications, of genomes, and the ratio
+dup_df <- data.frame("Genus" = names(dup), "Genomes" = as.numeric(dup), "Genomes_dup"= as.numeric(dup_noNA), "Percentage" = round(as.numeric(dup_noNA) / as.numeric(dup)*100, 1))
+
+# remove the genera that have less than 10 genomes
+dup_df_filter <- dup_df[dup_df$Genomes >= 10, ]
+
+# reorder the data for the graph
+dup_df_filter <- dup_df_filter[order(-dup_df_filter$Percentage), ]
+
+# extract from the dataset only the data corresponding to the genus we are interested in  
+frub_genus_10dup <- frub %>%
+  filter(Genus %in% dup_df_filter$Genus) %>%
+  distinct(Qid, .keep_all = TRUE)
+
+# for each genus, get the number of genomes and the number of genomes with a given recombinase family, and do the 
+genus_recombinase <- frub_genus_10dup %>%
+                    group_by(Genus) %>%
+                    mutate(Rect = sum(grepl("phrog_10056|phrog_12233|phrog_148|phrog_252|phrog_2760|phrog_2780|phrog_4171|phrog_561", Phrog_recombinase)),
+                           Erf = sum(grepl("phrog_1097|phrog_155|phrog_2324|phrog_30552|phrog_5917", Phrog_recombinase)),
+                           Sak = sum(grepl("phrog_659|phrog_8492", Phrog_recombinase)),
+                           Sak4 = sum(grepl("phrog_124|phrog_2872", Phrog_recombinase)),
+                           Uvsx = sum(grepl("phrog_97", Phrog_recombinase)),
+                           Gp25 = sum(grepl("phrog_112|phrog_7011", Phrog_recombinase)),
+                           Genome_count = n()) %>%
+                    ungroup() %>%
+                    mutate(Rect_Pct = round((100*Rect/Genome_count), digits = 2),
+                           Erf_Pct = round((100*Erf/Genome_count), digits = 2),
+                           Sak_Pct = round((100*Sak/Genome_count), digits = 2),
+                           Sak4_Pct = round((100*Sak4/Genome_count), digits = 2),
+                           Uvsx_Pct = round((100*Uvsx/Genome_count), digits = 2),
+                           Gp25_Pct = round((100*Gp25/Genome_count), digits = 2)) %>%
+                    select(Genus, Rect, Erf, Sak, Sak4, Uvsx, Gp25, Rect_Pct, Erf_Pct, Sak_Pct, Sak4_Pct, Uvsx_Pct, Gp25_Pct, Genome_count) %>% 
+                    distinct()
+
+# add the recombinase(s) family(ies) for each genus depending on their % compared to all genomes
+columns_to_check <- c("Rect_Pct", "Erf_Pct", "Sak_Pct", "Sak4_Pct", "Uvsx_Pct", "Gp25_Pct")
+shortened_names <- gsub("_Pct", "", columns_to_check)
+
+# add the recombinase family(ies) to each genus depending on their % presence 
+genus_recombinase <- genus_recombinase %>%
+  mutate(Recombinase = apply(across(all_of(columns_to_check)), 1, function(x) {
+    valid_columns <- names(x)[x >= 10]
+    short_names <- shortened_names[columns_to_check %in% valid_columns]
+    paste(short_names, collapse = ", ")
+  }))
+
+# add a value when there is no recombinase
+genus_recombinase <- genus_recombinase %>%
+  mutate(Recombinase = ifelse(is.na(Recombinase) | Recombinase == "", "None", Recombinase))
+
+# add the recombinase to the dataframe with % genomes with duplication
+dup_df_filter_rec <- dup_df_filter %>%
+  left_join(genus_recombinase %>% select(Genus, Recombinase), by = "Genus")
+
+# for each genus, get the number of genomes and the number of genomes with an integrase, and do the % integrase
+genus_integrase <- frub_genus_10dup %>%
+                    group_by(Genus) %>%
+                    mutate(Integrase_Count = sum(Integrase >= 1),
+                           Genome_count = n()) %>%
+                    ungroup() %>%
+                    mutate(Integrase_Percent = round((Integrase_Count/Genome_count)*100, digits = 2)) %>%
+                    select(Genus, Integrase_Count, Genome_count, Integrase_Percent) %>% 
+                    distinct()
+
+# classify the lifestyle of the phages depending on the % integrase
+genus_integrase <- genus_integrase %>%
+                    mutate(Lifestyle = case_when(Integrase_Percent >= 80 ~ "Temperate",
+                                                 Integrase_Percent <= 20 ~ "Virulent",
+                                                 TRUE ~ "Undetermined"))
+
+# add the lifestyle classification to the dataframe with % genomes with duplication
+dup_df_filter_rec_lifestyle <- dup_df_filter_rec %>%
+  left_join(genus_integrase %>% select(Genus, Lifestyle), by = "Genus")
+
+# prepare the % of recombinase for each family, and a "None" "family" (if none < 0, we force it at 0)
+dup_df_filter_graph <- dup_df_filter %>%
+  left_join(genus_recombinase %>% select(Genus, Rect_Pct, Erf_Pct, Sak_Pct, Sak4_Pct, Uvsx_Pct, Gp25_Pct), by = "Genus") %>%
+  mutate(None_Pct = pmax(0, 100 - (Rect_Pct + Erf_Pct + Sak_Pct + Sak4_Pct + Uvsx_Pct + Gp25_Pct))) %>%
+  left_join(genus_integrase %>% select(Genus, Lifestyle), by = "Genus") %>%
+  select(Genus, Percentage, Rect_Pct, Erf_Pct, Sak_Pct, Sak4_Pct, Uvsx_Pct, Gp25_Pct, None_Pct, Lifestyle)
+
+# adapting the recombinase family names
+names(dup_df_filter_graph) <- gsub("_Pct$", "", names(dup_df_filter_graph))
+
+# change the order of the genus so that Felixounavirus shows up as number 1
+dup_df_filter_graph$Genus <- factor(dup_df_filter_graph$Genus, levels = rev(dup_df_filter_graph$Genus))
+
+# recalculate the %duplication for each recombinase family depending on the % presence of that family
+dup_df_filter_graph2 <- dup_df_filter_graph %>%
+  mutate(Rect = Rect * (Percentage/100),
+         Erf = Erf * (Percentage/100),
+         Sak = Sak * (Percentage/100),
+         Sak4 = Sak4 * (Percentage/100),
+         Uvsx = Uvsx * (Percentage/100),
+         Gp25 = Gp25 * (Percentage/100),
+         None = None * (Percentage/100)) %>%
+  select(Genus, Rect, Erf, Sak, Sak4, Uvsx, Gp25, None, Lifestyle)
+
+# melt the dataframe for plotting
+dup_df_filter_graph_melt <- dup_df_filter_graph2 %>%
+  pivot_longer(cols = c(Rect, Erf, Sak, Sak4, Uvsx, Gp25, None),
+               names_to = "Recombinase",
+               values_to = "Recombinase_Pct")
+
+# order of the recombinase families
+dup_df_filter_graph_melt$Recombinase <- factor(dup_df_filter_graph_melt$Recombinase, levels = c("Erf", "Sak", "Rect", "Sak4", "Gp25", "Uvsx", "None"))
+
+# plot only the top 10
+ggplot(head(dup_df_filter_graph_melt, n = 70), aes(x = reorder(Genus, Recombinase_Pct), y = Recombinase_Pct, fill = Recombinase)) +
+  geom_bar(stat = "identity", position = "stack", width = 0.7, size = 1) +
+  geom_bar(aes(x = reorder(Genus, Recombinase_Pct), y = Recombinase_Pct, group = reorder(Genus, Recombinase_Pct)), stat = "summary", fun = sum, fill = "transparent", width = 0.7, size = 0.5, color = "black") +
+  coord_flip() +
+  scale_y_continuous(limits = c(-25, 100), breaks = seq(0, 100, 20)) +
+  scale_fill_manual(name = "Recombinase Family",
+                    values = c("Rect" = "#4169E1", "Sak4" = "#8B0000", "Sak" = "#191970", "Uvsx" = "#DC143C", "Erf" = "#4682B4", "Gp25" = "#008B45", "None" = "grey"),
+                    labels = c("Rect" = "RecT", "Sak4" = "Sak4", "Sak" = "Sak", "Uvsx" = "Uvsx", "Erf" = "Erf", "Gp25" = "Gp2.5", "None" = "None")) +
+  new_scale_fill() +
+  geom_tile(aes(x = reorder(Genus, Recombinase_Pct), y = -15, fill = Lifestyle), width = 1, height = 10, size = 6, color = "white") +
+  scale_fill_manual(name = "Lifestyle",
+                    values = c("Virulent" = "darkgreen", "Temperate" = "darkorange")) +
+  labs(title = "",
+       x = "Genus",
+       y = "Percentage of genomes with at least 1 duplication") +
+  theme_minimal() +
+  theme(text = element_text(size = 15), axis.text = element_text(color = "black"), panel.grid.major.y = element_blank(), axis.text.y = element_text(face = "italic"))
+
+ggsave("Top10_percentage.png", width = 10, height = 6, dpi = 300)
+```
+
+10 genera with the highest number of duplications per genome and their associated characteristics. This recreates Fig 3B:
+
+```{r Lifestyle_Recombinase_Number_Dup_Graph, message=FALSE, warning=FALSE}
+# number of duplications per genus
+count_noNA <- table(frub_noNA$Genus)
+
+# number of genomes per genus
+count <- table(frub_dedup$Genus)
+# only keep the number of genomes per genus for the genus that have duplications
+count <- count[names(count_noNA)]
+
+# dataframe with, for each genus, the number of duplications, of genomes, and the ratio
+count_df <- data.frame("Genus" = names(count), "Genomes" = as.numeric(count), "Duplications"= as.numeric(count_noNA), "Duplications_per_genome" = as.numeric(count_noNA) / as.numeric(count))
+
+# remove the genera that have less than 10 genomes
+count_df_filter <- count_df[count_df$Genomes >= 10, ]
+
+# reorder the data for the graph
+count_df_filter <- count_df_filter[order(-count_df_filter$Duplications_per_genome), ]
+
+# prepare the % of recombinase for each family, and a "None" "family" (if none < 0, we force it at 0)
+count_df_filter_graph <- count_df_filter %>%
+  left_join(genus_recombinase %>% select(Genus, Rect_Pct, Erf_Pct, Sak_Pct, Sak4_Pct, Uvsx_Pct, Gp25_Pct), by = "Genus") %>%
+  mutate(None_Pct = pmax(0, 100 - (Rect_Pct + Erf_Pct + Sak_Pct + Sak4_Pct + Uvsx_Pct + Gp25_Pct))) %>%
+  left_join(genus_integrase %>% select(Genus, Lifestyle), by = "Genus") %>%
+  select(Genus, Duplications_per_genome, Rect_Pct, Erf_Pct, Sak_Pct, Sak4_Pct, Uvsx_Pct, Gp25_Pct, None_Pct, Lifestyle)
+
+# adapting the recombinase family names
+names(count_df_filter_graph) <- gsub("_Pct$", "", names(count_df_filter_graph))
+
+# change the order of the genus so that Felixounavirus shows up as number 1
+count_df_filter_graph$Genus <- factor(count_df_filter_graph$Genus, levels = rev(count_df_filter_graph$Genus))
+
+# recalculate the %duplication for each recombinase family depending on the % presence of that family
+count_df_filter_graph2 <- count_df_filter_graph %>%
+  mutate(Rect = Rect * (Duplications_per_genome/100),
+         Erf = Erf * (Duplications_per_genome/100),
+         Sak = Sak * (Duplications_per_genome/100),
+         Sak4 = Sak4 * (Duplications_per_genome/100),
+         Uvsx = Uvsx * (Duplications_per_genome/100),
+         Gp25 = Gp25 * (Duplications_per_genome/100),
+         None = None * (Duplications_per_genome/100)) %>%
+  select(Genus, Rect, Erf, Sak, Sak4, Uvsx, Gp25, None, Lifestyle)
+
+# melt the dataframe for plotting
+count_df_filter_graph_melt <- count_df_filter_graph2 %>%
+  pivot_longer(cols = c(Rect, Erf, Sak, Sak4, Uvsx, Gp25, None),
+               names_to = "Recombinase",
+               values_to = "Recombinase_Pct")
+
+# order of the recombinase families
+count_df_filter_graph_melt$Recombinase <- factor(count_df_filter_graph_melt$Recombinase, levels = c("Erf", "Sak", "Rect", "Sak4", "Gp25", "Uvsx", "None"))
+
+# plot only the top 10
+ggplot(head(count_df_filter_graph_melt, n = 70), aes(x = reorder(Genus, Recombinase_Pct), y = Recombinase_Pct, fill = Recombinase)) +
+  geom_bar(stat = "identity", position = "stack", width = 0.7, size = 1) +
+  geom_bar(aes(x = reorder(Genus, Recombinase_Pct), y = Recombinase_Pct, group = reorder(Genus, Recombinase_Pct)), stat = "summary", fun = sum, fill = "transparent", width = 0.7, size = 0.5, color = "black") +
+  scale_y_continuous(limits = c(-0.75, 3.5), breaks = seq(0, 3.5, 1)) +
+  coord_flip() +
+  scale_fill_manual(name = "Recombinase Family",
+                    values = c("Rect" = "#4169E1", "Sak4" = "#8B0000", "Sak" = "#191970", "Uvsx" = "#DC143C", "Erf" = "#4682B4", "Gp25" = "#008B45", "None" = "grey"),
+                    labels = c("Rect" = "RecT", "Sak4" = "Sak4", "Sak" = "Sak", "Uvsx" = "Uvsx", "Erf" = "Erf", "Gp25" = "Gp2.5", "None" = "None")) +   
+  new_scale_fill() +
+  geom_tile(aes(x = reorder(Genus, Recombinase_Pct), y = -0.5, fill = Lifestyle), width = 1, height = 0.35, size = 6, color = "white") +
+  scale_fill_manual(name = "Lifestyle",
+                    values = c("Virulent" = "darkgreen", "Temperate" = "darkorange")) +
+  labs(title = "",
+       x = "Genus",
+       y = "Duplications/Genome") +
+  theme_minimal() +
+  theme(text = element_text(size = 15), axis.text = element_text(color = "black"), panel.grid.major.y = element_blank(), axis.text.y = element_text(face = "italic"))
+
+ggsave("Top10_number.png", width = 10, height = 6, dpi = 300)
+```
+
+All genera, ordered by decreasing highest percentage of genomes with at least 1 duplication, and their associated characteristics. First, the full table:
+
+```{r Lifestyle_Recombinase_Percent_Dup_Table_All, message=FALSE, warning=FALSE}
+datatable(dup_df_filter_rec_lifestyle, filter = 'top', extensions = 'Buttons', options = list(dom = 'Bfrtip', buttons = c('copy', 'csv', 'excel', 'pdf', 'print')))
+```
+
+This recreates Fig S4:
+
+```{r Lifestyle_Recombinase_Percent_Dup_Graph_All, message=FALSE, warning=FALSE}
+ggplot(dup_df_filter_graph_melt, aes(x = reorder(Genus, Recombinase_Pct), y = Recombinase_Pct, fill = Recombinase)) +
+  geom_bar(stat = "identity", position = "stack", width = 0.7, size = 1) +
+  geom_bar(aes(x = reorder(Genus, Recombinase_Pct), y = Recombinase_Pct, group = reorder(Genus, Recombinase_Pct)), stat = "summary", fun = sum, fill = "transparent", width = 0.7, size = 0.25, color = "black") +
+  scale_y_continuous(limits = c(-4, 100), breaks = seq(0, 100, 20)) +
+  coord_flip() +
+  scale_fill_manual(name = "Recombinase Family",
+                    values = c("Rect" = "#4169E1", "Sak4" = "#8B0000", "Sak" = "#191970", "Uvsx" = "#DC143C", "Erf" = "#4682B4", "Gp25" = "#008B45", "None" = "grey"),
+                    labels = c("Rect" = "RecT", "Sak4" = "Sak4", "Sak" = "Sak", "Uvsx" = "Uvsx", "Erf" = "Erf", "Gp25" = "Gp2.5", "None" = "None")) +   
+  new_scale_fill() +
+  geom_tile(aes(x = reorder(Genus, Recombinase_Pct), y = -2.5, fill = Lifestyle), width = 1, height = 2, size = 0.25, color = "white") +
+  scale_fill_manual(name = "Lifestyle",
+                    values = c("Virulent" = "darkgreen", "Temperate" = "darkorange", "Undetermined" = "darkgrey")) +
+  labs(title = "",
+       x = "Genus",
+       y = "Percentage of genomes with at least 1 duplication") +
+  theme_minimal() +
+  theme(text = element_text(size = 15), axis.text = element_text(color = "black"), panel.grid.major.y = element_blank(), axis.text.y = element_text(face = "italic"))
+
+ggsave("Top_percent_dup_all.png", width = 10, height = 12, dpi = 300)
+```
+
+# Felixounavirus
+
+Distribution of the number of duplications per genome for Felixounaviruses. This recreates Fig S5A:
+
+```{r felix_NCBI_genomes, message=FALSE, warning=FALSE}
+# subset of duplication data for Felixounavirus only
+frub_felix_noNA <- frub_felix[!is.na(frub_felix$Qstart),]
+
+# number of duplications per genome
+nb_felix_NCBI <- as.data.frame(table(frub_felix_noNA$Qid))
+# number of duplication, for each number of duplication per genome
+distribution_felix_NCBI <- as.data.frame(table(nb_felix_NCBI$Freq))
+colnames(distribution_felix_NCBI) <- c("number_of_duplications", "number_of_genomes")
+
+# histogram
+ggplot(data = distribution_felix_NCBI, aes(x=number_of_duplications, y=number_of_genomes)) + 
+  geom_bar(stat="identity", fill = "#56B4E9", color = "black", size = 0.5, width = 0.5) +
+  labs(x="Number of duplications", y="Number of genomes") +
+  theme_classic() + 
+  theme(text = element_text(size = 20), axis.text = element_text(color = "black"))
+
+ggsave("Felixou_number.png", width = 8, height = 6, dpi = 300)
+```
+
+Distribution of the size of duplications for Felixounaviruses. This recreates Fig S5B:
+
+```{r felix_NCBI_size_duplications, message=FALSE, warning=FALSE}
+# generating the appropriate x axis breaks (50 bp each, from 100 to 1000, with a special category for all that > 1000)
+bins_felix_NCBI <- cut(frub_felix_noNA$QSlgt, breaks, right = FALSE)
+bins_length_felix_NCBI <- as.data.frame(table(bins_felix_NCBI))
+bins_length_felix_NCBI$bins <- as.character(bins_length_felix_NCBI$bins)
+bins_length_felix_NCBI <- rbind(bins_length_felix_NCBI, c(">1000", nrow(frub_felix_noNA[frub_felix_noNA$QSlgt >=1000,])))
+bins_length_felix_NCBI$bins <- breaks
+bins_length_felix_NCBI$Freq <- as.numeric(bins_length_felix_NCBI$Freq)
+colnames(bins_length_felix_NCBI) <- c("size", "number_of_duplications")
+
+ggplot(data = bins_length_felix_NCBI, aes(x = as.factor(size), y = number_of_duplications)) + 
+  geom_bar(stat = "identity", fill = "#56B4E9", color = "black", size = 0.5, width = 0.7) +
+  scale_x_discrete(labels = c("100-149", "150-199", "200-249", "250-299", "300-349", "350-399",
+                              "400-449", "450-499", "500-549", "550-599", "600-649", "650-699",
+                              "700-749", "750-799", "800-849", "850-899", "900-949", "950-999", "≥1000")) +
+  theme_classic() +
+  theme(axis.title = element_text(size = 20), axis.text.y = element_text(size = 15),
+        axis.text.x = element_text(size = 15, angle = 35, hjust = 1), axis.text = element_text(color = "black")) +
+  labs(x = "Size of duplications (bp)", y = "Number of duplications")
+
+ggsave("Felixou_sizes.png", width = 8, height = 6, dpi = 300)
+```
+
+Distribution of the annotations of duplications for Felixounaviruses. This recreates Fig S5C:
+
+```{r felix_NCBI_annotation_duplications, message=FALSE, warning=FALSE}
+frub_felix_noNA <- frub_felix[!is.na(frub_felix$Qstart),]
+
+frub_felix_noNA$Functions_Qannot <- str_extract_all(frub_felix_noNA$Qannot, "function=[^;]+")
+frub_felix_noNA$Functions_Sannot <- str_extract_all(frub_felix_noNA$Sannot, "function=[^;]+")
+
+# remove the "function=" prefix
+frub_felix_noNA$Functions_Qannot <- lapply(frub_felix_noNA$Functions_Qannot, function(x) str_replace_all(x, "function=", ""))
+frub_felix_noNA$Functions_Sannot  <- lapply(frub_felix_noNA$Functions_Sannot, function(x) str_replace_all(x, "function=", ""))
+
+# merge both duplications locations
+frub_felix_noNA$All_functions <- mapply(function(x, y) c(x, y), frub_felix_noNA$Functions_Qannot, frub_felix_noNA$Functions_Sannot)
+
+# dataframe of the function for each CDS
+annot_felix_df_NCBI  <- as.data.frame(table(unlist(frub_felix_noNA$All_functions)))
+colnames(annot_felix_df_NCBI) <- c("Function", "Frequency")
+
+# add the percentage for each function
+annot_felix_df_NCBI$Percentage <- round((annot_felix_df_NCBI$Frequency / sum(annot_felix_df_NCBI$Frequency)) * 100, 1)
+
+# improve and arrange the order of annotations
+annot_felix_df_NCBI$Function <- str_to_sentence(annot_felix_df_NCBI$Function)
+annot_felix_df_NCBI$Function[1] <- "DNA/RNA metabolism"
+annot_felix_df_NCBI$Function <- factor(annot_felix_df_NCBI$Function, levels = c("Tail", "DNA/RNA metabolism", "Head and packaging", "AMG", "Transcription regulation", "Lysis", "Integration and excision", "Connector", "Other", "Unknown function"))
+
+# pie chart 
+ggplot(data = annot_felix_df_NCBI, aes(x="", y = Percentage, fill = Function)) +
+  geom_col(color = "black", size = 0.5) +
+  coord_polar(theta = "y") +
+  geom_text_repel(aes(label = paste0(Percentage, "%")), position = position_stack(vjust = 0.5), size = 4) +
+  scale_fill_manual(values = c("Tail" = "#00429d", 
+                                "DNA/RNA metabolism" = "#d62728",
+                                "Head and packaging" = "#619cff",
+                                "AMG" = "#bcbd22",
+                                "Transcription regulation" = "#ff7f0e",
+                                "Lysis" = "#2ca02c",
+                                "Integration and excision" = "#8c564b",
+                                "Connector" = "#2b6cb0",
+                                "Other" = "#9467bd",
+                                "Unknown function" = "#7f7f7f")) +
+  theme_void() +
+  theme(legend.key.size = unit(1, 'cm'), legend.text = element_text(size=10)) +
+  guides(fill = guide_legend(title = NULL))
+
+ggsave("Felixou_annotations.png", width = 8, height = 6, dpi = 300)
+```
+
+
