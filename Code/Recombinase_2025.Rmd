@@ -1,5 +1,5 @@
 ---
-title: "GlaF is a Gp2.5-like annealase that defines a new family of phage recombinases associated with duplication-rich Felixounavirus genomes"
+title: "Duplication-rich Felixounavirus genomes encode GlaF, a Gp2.5-like annealase defining a new family of phage recombinases"
 author: "Quentin Lamy-Besnier"
 date: "`r Sys.Date()`"
 output: 
@@ -23,7 +23,7 @@ editor_options:
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-Analysis of Lamy-Besnier et al. 2025: GlaF is a Gp2.5-like annealase that defines a new family of phage recombinases associated with duplication-rich Felixounavirus genomes.
+Analysis of Lamy-Besnier et al. 2025: Duplication-rich Felixounavirus genomes encode GlaF, a Gp2.5-like annealase defining a new family of phage recombinases.
 
 See https://github.com/QLamyBesnier/Recombinase_2025 for more information.
 
